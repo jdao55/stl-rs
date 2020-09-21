@@ -1,17 +1,23 @@
+#[macro_use]
+extern crate scan_fmt;
 mod stl {
 
     use byteorder::{ByteOrder, LittleEndian};
     use std::fs::File;
     use std::io::prelude::*;
-    use std::io::BufReader;
+    use std::io::{BufReader, SeekFrom};
 
+    pub enum StlHeader {
+        TextFormat(String),
+        BinFormat([u8; 80]),
+    }
     #[derive(Debug)]
     pub struct Triangle {
         pub normal: [f32; 3],
         pub points: [[f32; 3]; 3],
     }
     pub struct StlFormat {
-        pub header: [u8; 80],
+        pub header: StlHeader,
         pub triangles: Vec<Triangle>,
     }
 
@@ -60,10 +66,63 @@ mod stl {
             .expect("error reading number of triangles");
 
         let number_tri = u32::from_le_bytes(tri_count);
-
         let mut triangles: Vec<Triangle> = vec![];
         for _ in 0..number_tri {
             triangles.push(read_triangle(reader));
+        }
+        let header = StlHeader::BinFormat(header);
+        Ok(StlFormat { header, triangles })
+    }
+
+    fn read_text<R: Read>(reader: &mut BufReader<R>) -> Result<StlFormat, std::io::Error> {
+        let mut line_iter = reader.lines();
+        let name_line = line_iter.next().unwrap().unwrap();
+        println!("{}", name_line);
+        //let name_line = reader.read_line()
+        let (_, name) = scan_fmt!(&name_line[..], "{} {}", String, String).unwrap();
+        let header = StlHeader::TextFormat(name);
+        let mut triangles: Vec<Triangle> = vec![];
+
+        let mut line = line_iter.next().unwrap();
+
+        while let Ok(line_str) = line {
+            if &line_str[0..8] == "endsolid" {
+                break;
+            }
+            println!("{}", line_str);
+            let (_, _, a, b, c) = scan_fmt!(
+                &line_str[..],
+                "{} {} {} {} {} {}",
+                String,
+                String,
+                f32,
+                f32,
+                f32
+            )
+            .unwrap();
+            let normal: [f32; 3] = [a, b, c];
+
+            //consume outer loop line
+            let beginloop = line_iter.next().unwrap().unwrap();
+            assert!(beginloop == "outer loop");
+
+            let mut points: [[f32; 3]; 3] = [[0.0; 3]; 3];
+            for i in 0..3 {
+                let point_str = line_iter.next().unwrap().unwrap();
+                let (_, x, y, z) =
+                    scan_fmt!(&point_str[..], "{} {} {} {}", String, f32, f32, f32).unwrap();
+                points[i] = [x, y, z];
+            }
+            triangles.push(Triangle { normal, points });
+
+            //consume endloop and endfacet lines
+            let endloop = line_iter.next().unwrap().unwrap();
+            assert!(endloop == "endloop");
+            let endfacet = line_iter.next().unwrap().unwrap();
+            assert!(endfacet == "endfacet");
+
+            //get line for next facet
+            line = line_iter.next().unwrap();
         }
         Ok(StlFormat { header, triangles })
     }
@@ -75,12 +134,11 @@ mod stl {
         };
         let mut reader = BufReader::new(f);
         if is_binary_file(&mut reader) {
+            reader.seek(SeekFrom::Start(0)).unwrap();
             return read_binary(&mut reader);
         } else {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                "text format not supported",
-            ));
+            reader.seek(SeekFrom::Start(0)).unwrap();
+            return read_text(&mut reader);
         }
     }
 }
@@ -96,6 +154,9 @@ mod test {
     }
     #[test]
     fn test_text_stl() {
-        let cube = read_file("cube.stl");
+        let cube = read_file("cube_text.stl").unwrap();
+        for tri in cube.triangles {
+            println!("{:?}", tri);
+        }
     }
 }
