@@ -21,13 +21,13 @@ mod stl {
         pub triangles: Vec<Triangle>,
     }
 
-    fn read_triangle<R: Read>(freader: &mut BufReader<R>) -> Triangle {
+    fn read_triangle<R: Read>(freader: &mut BufReader<R>) -> Result<Triangle, std::io::Error> {
         let mut normal: [f32; 3] = [0.0; 3];
         let mut points: [[f32; 3]; 3] = [[0.0; 3]; 3];
 
         //read normal vector
         let mut buf: [u8; 12] = [0; 12];
-        freader.read_exact(&mut buf).unwrap();
+        freader.read_exact(&mut buf)?;
         LittleEndian::read_f32_into(&buf, &mut normal);
 
         //read 3 points
@@ -39,26 +39,23 @@ mod stl {
 
         //read attributed 16 bits
         let mut attr: [u8; 2] = [0; 2];
-        freader.read_exact(&mut attr).unwrap();
-        Triangle { normal, points }
+        freader.read_exact(&mut attr)?;
+        Ok(Triangle { normal, points })
     }
 
-    fn is_binary_file<R: Read>(reader: &mut BufReader<R>) -> bool {
+    fn is_binary_file<R: Read>(reader: &mut BufReader<R>) -> Result<bool, std::io::Error> {
         use std::str;
         let mut solid_buffer: [u8; 5] = [0; 5];
-        reader.read_exact(&mut solid_buffer).unwrap();
+        reader.read_exact(&mut solid_buffer)?;
         match str::from_utf8(&solid_buffer) {
-            Ok(s) => s != "solid",
-            Err(_) => true,
+            Ok(s) => Ok(s != "solid"),
+            Err(_) => Ok(true),
         }
     }
 
     fn read_binary<R: Read>(reader: &mut BufReader<R>) -> Result<StlFormat, std::io::Error> {
         let mut header: [u8; 80] = [0; 80];
-        match reader.read_exact(&mut header) {
-            Ok(_) => (),
-            Err(e) => return Err(e),
-        }
+        reader.read_exact(&mut header)?;
 
         let mut tri_count: [u8; 4] = [0, 0, 0, 0];
         reader
@@ -68,13 +65,15 @@ mod stl {
         let number_tri = u32::from_le_bytes(tri_count);
         let mut triangles: Vec<Triangle> = vec![];
         for _ in 0..number_tri {
-            triangles.push(read_triangle(reader));
+            triangles.push(read_triangle(reader)?);
         }
         let header = StlHeader::BinFormat(header);
         Ok(StlFormat { header, triangles })
     }
 
     fn read_text<R: Read>(reader: &mut BufReader<R>) -> Result<StlFormat, std::io::Error> {
+        //TODO replace line_iter with read_line call
+        //TODO remove unwraps for text parsing
         let mut line_iter = reader.lines();
         let name_line = line_iter.next().unwrap().unwrap();
         println!("{}", name_line);
